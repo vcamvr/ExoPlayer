@@ -21,6 +21,8 @@ import com.google.android.exoplayer2.Format;
 import com.google.android.exoplayer2.source.TrackGroup;
 import com.google.android.exoplayer2.source.chunk.MediaChunk;
 import com.google.android.exoplayer2.upstream.BandwidthMeter;
+import com.google.android.exoplayer2.vr.OrientationMonitor;
+
 import java.util.List;
 
 /**
@@ -35,6 +37,7 @@ public class AdaptiveVideoTrackSelection extends BaseTrackSelection {
   public static final class Factory implements TrackSelection.Factory {
 
     private final BandwidthMeter bandwidthMeter;
+    private final OrientationMonitor orientationMonitor;
     private final int maxInitialBitrate;
     private final int minDurationForQualityIncreaseMs;
     private final int maxDurationForQualityDecreaseMs;
@@ -44,8 +47,8 @@ public class AdaptiveVideoTrackSelection extends BaseTrackSelection {
     /**
      * @param bandwidthMeter Provides an estimate of the currently available bandwidth.
      */
-    public Factory(BandwidthMeter bandwidthMeter) {
-      this (bandwidthMeter, DEFAULT_MAX_INITIAL_BITRATE,
+    public Factory(BandwidthMeter bandwidthMeter, OrientationMonitor orientationMonitor) {
+      this (bandwidthMeter, orientationMonitor, DEFAULT_MAX_INITIAL_BITRATE,
           DEFAULT_MIN_DURATION_FOR_QUALITY_INCREASE_MS,
           DEFAULT_MAX_DURATION_FOR_QUALITY_DECREASE_MS,
           DEFAULT_MIN_DURATION_TO_RETAIN_AFTER_DISCARD_MS, DEFAULT_BANDWIDTH_FRACTION);
@@ -67,10 +70,11 @@ public class AdaptiveVideoTrackSelection extends BaseTrackSelection {
      *     consider available for use. Setting to a value less than 1 is recommended to account
      *     for inaccuracies in the bandwidth estimator.
      */
-    public Factory(BandwidthMeter bandwidthMeter, int maxInitialBitrate,
+    public Factory(BandwidthMeter bandwidthMeter, OrientationMonitor orientationMonitor, int maxInitialBitrate,
         int minDurationForQualityIncreaseMs, int maxDurationForQualityDecreaseMs,
         int minDurationToRetainAfterDiscardMs, float bandwidthFraction) {
       this.bandwidthMeter = bandwidthMeter;
+      this.orientationMonitor = orientationMonitor;
       this.maxInitialBitrate = maxInitialBitrate;
       this.minDurationForQualityIncreaseMs = minDurationForQualityIncreaseMs;
       this.maxDurationForQualityDecreaseMs = maxDurationForQualityDecreaseMs;
@@ -80,7 +84,7 @@ public class AdaptiveVideoTrackSelection extends BaseTrackSelection {
 
     @Override
     public AdaptiveVideoTrackSelection createTrackSelection(TrackGroup group, int... tracks) {
-      return new AdaptiveVideoTrackSelection(group, tracks, bandwidthMeter, maxInitialBitrate,
+      return new AdaptiveVideoTrackSelection(group, tracks, bandwidthMeter, orientationMonitor, maxInitialBitrate,
           minDurationForQualityIncreaseMs, maxDurationForQualityDecreaseMs,
           minDurationToRetainAfterDiscardMs, bandwidthFraction);
     }
@@ -94,6 +98,7 @@ public class AdaptiveVideoTrackSelection extends BaseTrackSelection {
   public static final float DEFAULT_BANDWIDTH_FRACTION = 0.75f;
 
   private final BandwidthMeter bandwidthMeter;
+  private final OrientationMonitor orientationMonitor;
   private final int maxInitialBitrate;
   private final long minDurationForQualityIncreaseUs;
   private final long maxDurationForQualityDecreaseUs;
@@ -110,8 +115,8 @@ public class AdaptiveVideoTrackSelection extends BaseTrackSelection {
    * @param bandwidthMeter Provides an estimate of the currently available bandwidth.
    */
   public AdaptiveVideoTrackSelection(TrackGroup group, int[] tracks,
-      BandwidthMeter bandwidthMeter) {
-    this (group, tracks, bandwidthMeter, DEFAULT_MAX_INITIAL_BITRATE,
+      BandwidthMeter bandwidthMeter, OrientationMonitor orientationMonitor) {
+    this (group, tracks, bandwidthMeter, orientationMonitor, DEFAULT_MAX_INITIAL_BITRATE,
         DEFAULT_MIN_DURATION_FOR_QUALITY_INCREASE_MS,
         DEFAULT_MAX_DURATION_FOR_QUALITY_DECREASE_MS,
         DEFAULT_MIN_DURATION_TO_RETAIN_AFTER_DISCARD_MS, DEFAULT_BANDWIDTH_FRACTION);
@@ -136,12 +141,13 @@ public class AdaptiveVideoTrackSelection extends BaseTrackSelection {
    *     consider available for use. Setting to a value less than 1 is recommended to account
    *     for inaccuracies in the bandwidth estimator.
    */
-  public AdaptiveVideoTrackSelection(TrackGroup group, int[] tracks, BandwidthMeter bandwidthMeter,
+  public AdaptiveVideoTrackSelection(TrackGroup group, int[] tracks, BandwidthMeter bandwidthMeter, OrientationMonitor orientationMonitor,
       int maxInitialBitrate, long minDurationForQualityIncreaseMs,
       long maxDurationForQualityDecreaseMs, long minDurationToRetainAfterDiscardMs,
       float bandwidthFraction) {
     super(group, tracks);
     this.bandwidthMeter = bandwidthMeter;
+    this.orientationMonitor = orientationMonitor;
     this.maxInitialBitrate = maxInitialBitrate;
     this.minDurationForQualityIncreaseUs = minDurationForQualityIncreaseMs * 1000L;
     this.maxDurationForQualityDecreaseUs = maxDurationForQualityDecreaseMs * 1000L;
@@ -179,6 +185,8 @@ public class AdaptiveVideoTrackSelection extends BaseTrackSelection {
     if (selectedIndex != currentSelectedIndex) {
       reason = C.SELECTION_REASON_ADAPTIVE;
     }
+
+    selectedIndex = orientationMonitor.getOrientation() / 2;
   }
 
   @Override

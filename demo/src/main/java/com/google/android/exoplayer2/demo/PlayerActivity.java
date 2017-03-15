@@ -18,6 +18,7 @@ package com.google.android.exoplayer2.demo;
 import android.app.Activity;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.content.res.Configuration;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
@@ -67,10 +68,15 @@ import com.google.android.exoplayer2.upstream.DataSource;
 import com.google.android.exoplayer2.upstream.DefaultBandwidthMeter;
 import com.google.android.exoplayer2.upstream.HttpDataSource;
 import com.google.android.exoplayer2.util.Util;
+import com.google.android.exoplayer2.vr.DefaultOrientationMonitor;
+import com.google.android.exoplayer2.vr.OrientationChangeListener;
+
 import java.net.CookieHandler;
 import java.net.CookieManager;
 import java.net.CookiePolicy;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -94,10 +100,13 @@ public class PlayerActivity extends Activity implements OnClickListener, ExoPlay
   public static final String EXTENSION_LIST_EXTRA = "extension_list";
 
   private static final DefaultBandwidthMeter BANDWIDTH_METER = new DefaultBandwidthMeter();
+  private static final DefaultOrientationMonitor ORIENTATION_MONITOR = new DefaultOrientationMonitor();
+  private static final List<OrientationChangeListener> orientationChangeListeners = new ArrayList<OrientationChangeListener>();
   private static final CookieManager DEFAULT_COOKIE_MANAGER;
   static {
     DEFAULT_COOKIE_MANAGER = new CookieManager();
     DEFAULT_COOKIE_MANAGER.setCookiePolicy(CookiePolicy.ACCEPT_ORIGINAL_SERVER);
+    orientationChangeListeners.add(ORIENTATION_MONITOR);
   }
 
   private Handler mainHandler;
@@ -117,6 +126,14 @@ public class PlayerActivity extends Activity implements OnClickListener, ExoPlay
   private boolean shouldAutoPlay;
   private int resumeWindow;
   private long resumePosition;
+
+  @Override
+  public void onConfigurationChanged(Configuration newConfig) {
+    super.onConfigurationChanged(newConfig);
+    for (OrientationChangeListener listener : orientationChangeListeners) {
+      listener.onOrientationChanged(newConfig.orientation);
+    }
+  }
 
   // Activity lifecycle
 
@@ -267,7 +284,7 @@ public class PlayerActivity extends Activity implements OnClickListener, ExoPlay
               : SimpleExoPlayer.EXTENSION_RENDERER_MODE_ON)
               : SimpleExoPlayer.EXTENSION_RENDERER_MODE_OFF;
       TrackSelection.Factory videoTrackSelectionFactory =
-          new AdaptiveVideoTrackSelection.Factory(BANDWIDTH_METER);
+          new AdaptiveVideoTrackSelection.Factory(BANDWIDTH_METER, ORIENTATION_MONITOR);
       trackSelector = new DefaultTrackSelector(videoTrackSelectionFactory);
       trackSelectionHelper = new TrackSelectionHelper(trackSelector, videoTrackSelectionFactory);
       player = ExoPlayerFactory.newSimpleInstance(this, trackSelector, new DefaultLoadControl(),

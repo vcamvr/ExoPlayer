@@ -329,7 +329,15 @@
     "samples": [
       {
         "name": "Dizzy",
-        "uri": "http://html5demos.com/assets/dizzy.mp4"
+        "uri": "http://cdn.veervr.tv/gP8Oc1o0ddfLSW5Cda9u9A/720p/index.mp4"
+      },
+      {
+        "name": "Dizzy2",
+        "uri": "http://cdn.veervr.tv/master2.m3u8"
+      },
+      {
+        "name": "Dizzy3",
+        "uri": "http://cdn.veervr.tv/master4.m3u8"
       },
       {
         "name": "Apple AAC 10s",
