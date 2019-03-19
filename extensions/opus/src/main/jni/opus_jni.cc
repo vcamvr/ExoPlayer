@@ -59,6 +59,7 @@ jint JNI_OnLoad(JavaVM* vm, void* reserved) {
 }
 
 static const int kBytesPerSample = 2;  // opus fixed point uses 16 bit samples.
+static const int kMaxOpusOutputPacketSizeSamples = 960 * 6;
 static int channelCount;
 static int errorCode;
 
@@ -92,25 +93,31 @@ DECODER_FUNC(jlong, opusInit, jint sampleRate, jint channelCount,
 }
 
 DECODER_FUNC(jint, opusDecode, jlong jDecoder, jlong jTimeUs,
-     jobject jInputBuffer, jint inputSize, jobject jOutputBuffer,
-     jint sampleRate) {
+     jobject jInputBuffer, jint inputSize, jobject jOutputBuffer) {
   OpusMSDecoder* decoder = reinterpret_cast<OpusMSDecoder*>(jDecoder);
   const uint8_t* inputBuffer =
       reinterpret_cast<const uint8_t*>(
           env->GetDirectBufferAddress(jInputBuffer));
 
-  const int32_t inputSampleCount =
-      opus_packet_get_nb_samples(inputBuffer, inputSize, sampleRate);
-  const jint outputSize = inputSampleCount * kBytesPerSample * channelCount;
+  const jint outputSize =
+      kMaxOpusOutputPacketSizeSamples * kBytesPerSample * channelCount;
 
   env->CallObjectMethod(jOutputBuffer, outputBufferInit, jTimeUs, outputSize);
+  if (env->ExceptionCheck()) {
+    // Exception is thrown in Java when returning from the native call.
+    return -1;
+  }
   const jobject jOutputBufferData = env->CallObjectMethod(jOutputBuffer,
       outputBufferInit, jTimeUs, outputSize);
+  if (env->ExceptionCheck()) {
+    // Exception is thrown in Java when returning from the native call.
+    return -1;
+  }
 
   int16_t* outputBufferData = reinterpret_cast<int16_t*>(
       env->GetDirectBufferAddress(jOutputBufferData));
   int sampleCount = opus_multistream_decode(decoder, inputBuffer, inputSize,
-      outputBufferData, outputSize, 0);
+      outputBufferData, kMaxOpusOutputPacketSizeSamples, 0);
   // record error code
   errorCode = (sampleCount < 0) ? sampleCount : 0;
   return (sampleCount < 0) ? sampleCount

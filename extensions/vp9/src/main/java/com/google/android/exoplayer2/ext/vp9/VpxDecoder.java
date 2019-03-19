@@ -15,9 +15,9 @@
  */
 package com.google.android.exoplayer2.ext.vp9;
 
+import android.view.Surface;
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.decoder.CryptoInfo;
-import com.google.android.exoplayer2.decoder.DecoderInputBuffer;
 import com.google.android.exoplayer2.decoder.SimpleDecoder;
 import com.google.android.exoplayer2.drm.DecryptionException;
 import com.google.android.exoplayer2.drm.ExoMediaCrypto;
@@ -27,11 +27,12 @@ import java.nio.ByteBuffer;
  * Vpx decoder.
  */
 /* package */ final class VpxDecoder extends
-    SimpleDecoder<DecoderInputBuffer, VpxOutputBuffer, VpxDecoderException> {
+    SimpleDecoder<VpxInputBuffer, VpxOutputBuffer, VpxDecoderException> {
 
   public static final int OUTPUT_MODE_NONE = -1;
   public static final int OUTPUT_MODE_YUV = 0;
   public static final int OUTPUT_MODE_RGB = 1;
+  public static final int OUTPUT_MODE_SURFACE_YUV = 2;
 
   private static final int NO_ERROR = 0;
   private static final int DECODE_ERROR = 1;
@@ -50,11 +51,19 @@ import java.nio.ByteBuffer;
    * @param initialInputBufferSize The initial size of each input buffer.
    * @param exoMediaCrypto The {@link ExoMediaCrypto} object required for decoding encrypted
    *     content. Maybe null and can be ignored if decoder does not handle encrypted content.
+   * @param disableLoopFilter Disable the libvpx in-loop smoothing filter.
+   * @param enableSurfaceYuvOutputMode Whether OUTPUT_MODE_SURFACE_YUV is allowed.
    * @throws VpxDecoderException Thrown if an exception occurs when initializing the decoder.
    */
-  public VpxDecoder(int numInputBuffers, int numOutputBuffers, int initialInputBufferSize,
-      ExoMediaCrypto exoMediaCrypto) throws VpxDecoderException {
-    super(new DecoderInputBuffer[numInputBuffers], new VpxOutputBuffer[numOutputBuffers]);
+  public VpxDecoder(
+      int numInputBuffers,
+      int numOutputBuffers,
+      int initialInputBufferSize,
+      ExoMediaCrypto exoMediaCrypto,
+      boolean disableLoopFilter,
+      boolean enableSurfaceYuvOutputMode)
+      throws VpxDecoderException {
+    super(new VpxInputBuffer[numInputBuffers], new VpxOutputBuffer[numOutputBuffers]);
     if (!VpxLibrary.isAvailable()) {
       throw new VpxDecoderException("Failed to load decoder native libraries.");
     }
@@ -62,7 +71,7 @@ import java.nio.ByteBuffer;
     if (exoMediaCrypto != null && !VpxLibrary.vpxIsSecureDecodeSupported()) {
       throw new VpxDecoderException("Vpx decoder does not support secure decode.");
     }
-    vpxDecContext = vpxInit();
+    vpxDecContext = vpxInit(disableLoopFilter, enableSurfaceYuvOutputMode);
     if (vpxDecContext == 0) {
       throw new VpxDecoderException("Failed to initialize decoder");
     }
@@ -85,8 +94,8 @@ import java.nio.ByteBuffer;
   }
 
   @Override
-  protected DecoderInputBuffer createInputBuffer() {
-    return new DecoderInputBuffer(DecoderInputBuffer.BUFFER_REPLACEMENT_MODE_DIRECT);
+  protected VpxInputBuffer createInputBuffer() {
+    return new VpxInputBuffer();
   }
 
   @Override
@@ -96,11 +105,21 @@ import java.nio.ByteBuffer;
 
   @Override
   protected void releaseOutputBuffer(VpxOutputBuffer buffer) {
+    // Decode only frames do not acquire a reference on the internal decoder buffer and thus do not
+    // require a call to vpxReleaseFrame.
+    if (outputMode == OUTPUT_MODE_SURFACE_YUV && !buffer.isDecodeOnly()) {
+      vpxReleaseFrame(vpxDecContext, buffer);
+    }
     super.releaseOutputBuffer(buffer);
   }
 
   @Override
-  protected VpxDecoderException decode(DecoderInputBuffer inputBuffer, VpxOutputBuffer outputBuffer,
+  protected VpxDecoderException createUnexpectedDecodeException(Throwable error) {
+    return new VpxDecoderException("Unexpected decode error", error);
+  }
+
+  @Override
+  protected VpxDecoderException decode(VpxInputBuffer inputBuffer, VpxOutputBuffer outputBuffer,
       boolean reset) {
     ByteBuffer inputData = inputBuffer.data;
     int inputSize = inputData.limit();
@@ -121,12 +140,15 @@ import java.nio.ByteBuffer;
       }
     }
 
-    outputBuffer.init(inputBuffer.timeUs, outputMode);
-    int getFrameResult = vpxGetFrame(vpxDecContext, outputBuffer);
-    if (getFrameResult == 1) {
-      outputBuffer.addFlag(C.BUFFER_FLAG_DECODE_ONLY);
-    } else if (getFrameResult == -1) {
-      return new VpxDecoderException("Buffer initialization failed.");
+    if (!inputBuffer.isDecodeOnly()) {
+      outputBuffer.init(inputBuffer.timeUs, outputMode);
+      int getFrameResult = vpxGetFrame(vpxDecContext, outputBuffer);
+      if (getFrameResult == 1) {
+        outputBuffer.addFlag(C.BUFFER_FLAG_DECODE_ONLY);
+      } else if (getFrameResult == -1) {
+        return new VpxDecoderException("Buffer initialization failed.");
+      }
+      outputBuffer.colorInfo = inputBuffer.colorInfo;
     }
     return null;
   }
@@ -137,13 +159,36 @@ import java.nio.ByteBuffer;
     vpxClose(vpxDecContext);
   }
 
-  private native long vpxInit();
+  /** Renders the outputBuffer to the surface. Used with OUTPUT_MODE_SURFACE_YUV only. */
+  public void renderToSurface(VpxOutputBuffer outputBuffer, Surface surface)
+      throws VpxDecoderException {
+    int getFrameResult = vpxRenderFrame(vpxDecContext, surface, outputBuffer);
+    if (getFrameResult == -1) {
+      throw new VpxDecoderException("Buffer render failed.");
+    }
+  }
+
+  private native long vpxInit(boolean disableLoopFilter, boolean enableSurfaceYuvOutputMode);
+
   private native long vpxClose(long context);
   private native long vpxDecode(long context, ByteBuffer encoded, int length);
   private native long vpxSecureDecode(long context, ByteBuffer encoded, int length,
-      ExoMediaCrypto wvCrypto, int inputMode, byte[] key, byte[] iv,
+      ExoMediaCrypto mediaCrypto, int inputMode, byte[] key, byte[] iv,
       int numSubSamples, int[] numBytesOfClearData, int[] numBytesOfEncryptedData);
   private native int vpxGetFrame(long context, VpxOutputBuffer outputBuffer);
+
+  /**
+   * Renders the frame to the surface. Used with OUTPUT_MODE_SURFACE_YUV only. Must only be called
+   * if {@link #vpxInit} was called with {@code enableBufferManager = true}.
+   */
+  private native int vpxRenderFrame(long context, Surface surface, VpxOutputBuffer outputBuffer);
+
+  /**
+   * Releases the frame. Used with OUTPUT_MODE_SURFACE_YUV only. Must only be called if {@link
+   * #vpxInit} was called with {@code enableBufferManager = true}.
+   */
+  private native int vpxReleaseFrame(long context, VpxOutputBuffer outputBuffer);
+
   private native int vpxGetErrorCode(long context);
   private native String vpxGetErrorMessage(long context);
 
